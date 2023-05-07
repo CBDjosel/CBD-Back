@@ -9,11 +9,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from werkzeug.utils import secure_filename
 from bson.binary import Binary
-
-#from flask_pymongo import PyMongo
-#from pymongo import MongoClient
-#from flask_pymongo import PyMongo
+import io
+import zlib
 import pymongo
+
+
+
 app = Flask(__name__)
 CORS(app)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -23,42 +24,78 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 #mongo = PyMongo(app)
 client = pymongo.MongoClient("mongodb://localhost:27017/")
 db = client["mi_base_de_datos"]
-collection = db["mis_pajaros"]
+collection_entrenar = db["mis_pajaros_entrenar"]
 collection_subidas = db["mis_pajaros_subidas"]
+collection_clases = db["mis_clases_de_pajaros"]
+collection_test = db["mis_pajaros_test"]
 #mongo = PyMongo(app)
 
 #client = MongoClient('mongodb://localhost:27017/') # dirección de conexión a la base de datos
 #db = client['nombre-de-tu-base-de-datos'] # nombre de la base de datos
 @app.route('/populate', methods=['POST'])
 def create_user():
-    # Receiving Data
-    print(request.json)
-    ruta_padre = "./pajaros2/birds/birds"
-    for tipo_ave in os.listdir(ruta_padre):
-        ruta_tipo_ave = os.path.join(ruta_padre, tipo_ave)
-        for imagen_nombre in os.listdir(ruta_tipo_ave):
-            ruta_imagen = os.path.join(ruta_tipo_ave, imagen_nombre)
+     # Receiving Data
+     print(request.json)
+     ruta_padre = "./pajaros2/birds/birds"
+     for tipo_ave in os.listdir(ruta_padre):
+         ruta_tipo_ave = os.path.join(ruta_padre, tipo_ave)
+         for imagen_nombre in os.listdir(ruta_tipo_ave):
+             ruta_imagen = os.path.join(ruta_tipo_ave, imagen_nombre)
 
-            # Preparar los datos y las imágenes
-            datos_imagen = {"tipo": tipo_ave, "test": True}
-            imagen = Image.open(ruta_imagen)
+             # Preparar los datos y las imágenes
+             datos_imagen = {"tipo": tipo_ave, "test": False}
+             imagen = Image.open(ruta_imagen)
 
-            # Convertir la imagen a bytes para almacenarla en MongoDB
-            imagen_bytes = Binary(imagen.tobytes())
+             # Convertir la imagen a bytes para almacenarla en MongoDB
+             imagen_bytes = Binary(imagen.tobytes())
 
-            # Insertar los datos y la imagen en la colección
-            collection.insert_one({"datos": datos_imagen, "imagen": imagen_bytes})
-    return {'message': 'recieved'}
+             # Insertar los datos y la imagen en la colección
+             collection_entrenar.insert_one({"datos": datos_imagen, "imagen": imagen_bytes})
+     return {'message': 'recieved'}
 
+@app.route('/populatetest', methods=['POST'])
+def create_user2():
+     # Receiving Data
+     print(request.json)
+     ruta_padre = "./pajaros2/birds/birdsTest"
+     for tipo_ave in os.listdir(ruta_padre):
+         ruta_tipo_ave = os.path.join(ruta_padre, tipo_ave)
+         for imagen_nombre in os.listdir(ruta_tipo_ave):
+             ruta_imagen = os.path.join(ruta_tipo_ave, imagen_nombre)
 
+             # Preparar los datos y las imágenes
+             datos_imagen = {"tipo": tipo_ave, "test": True}
+             imagen = Image.open(ruta_imagen)
+
+             # Convertir la imagen a bytes para almacenarla en MongoDB
+             imagen_bytes = Binary(imagen.tobytes())
+
+             # Insertar los datos y la imagen en la colección
+             collection_test.insert_one({"datos": datos_imagen, "imagen": imagen_bytes})
+     return {'message': 'recieved'}
 
 # aquí se carga el modelo solo hay que darle el path
 model_path = './best_model.pth'
 model = torch.load(model_path)
 # se cargan las clases con el número de clases para utilizarlo más tarde
 # se puede cambiar para coger la carpeta birds
-clases_path = './pajaros2/birds/birds'
-classes = os.listdir(clases_path)
+
+#clases_path = './pajaros2/birds/birds'
+#classes = os.listdir(clases_path)
+
+@app.route('/postclases', methods=['POST'])
+def post_clases():
+     clases_path = './pajaros2/birds/birds'
+     classes = os.listdir(clases_path)
+     for tipo_ave in classes:
+         collection_clases.insert_one({"clase": tipo_ave})
+     return {'message': 'recieved'}
+
+documentos = collection_clases.find()
+clases = []
+# iterar sobre los documentos e imprimirlos
+for documento in documentos:
+    clases.append(documento['clase'])
 
 # se crea un transformador para las imágenes de test
 mean = [0.4704, 0.4669, 0.3898]
@@ -85,9 +122,9 @@ def classify(model, image_transforms, image_path, classes):
 
 # se crea una lista de las imágenes de los tests que utilizamos
 # cambiar el path si es necesario utilizar otros tests
-tests_path = './pajaros2/submission_test/submission_test2'
-a = os.listdir(tests_path)
-a.sort(key=len)
+#tests_path = './pajaros2/submission_test/submission_test2'
+#a = os.listdir(tests_path)
+#a.sort(key=len)
 
 # se crea una lista para almacenar los resultados de la clasificación
 resultados = []
@@ -105,18 +142,24 @@ def upload():
     file.save(upload_path)
 
     # se guarda la imagen en el directorio 'uploads'
-    
+
     # se clasifica la imagen con la función 'classify' y se almacena el resultado
-    resultado = classify(model, image_transforms, os.path.join('static/archivos', filename), classes)
-    
+    resultado = classify(model, image_transforms, os.path.join('static/archivos', filename), clases)
     datos_imagen = {"tipo": resultado, "test": False}
     imagen = Image.open(os.path.join('static/archivos', filename))
+    
+    buf = io.BytesIO()
+    imagen.save(buf, format='JPEG', quality=90)
+    imagen_comprimida = buf.getvalue()
+
+# Opcional: Comprimir imagen con zlib
+    imagen_comprimida = zlib.compress(imagen_comprimida)
             # Convertir la imagen a bytes para almacenarla en MongoDB
     imagen_bytes = Binary(imagen.tobytes())
-    collection_subidas.insert_one({"datos": datos_imagen, "imagen": imagen_bytes})
+    collection_subidas.insert_one({"datos": datos_imagen, "imagen": imagen_comprimida})
     # se añade el resultado a la lista de resultados
     resultados.append(resultado)
-    
+    os.remove(os.path.join('static/archivos', filename))
     # se devuelve el resultado
     return resultado
 
